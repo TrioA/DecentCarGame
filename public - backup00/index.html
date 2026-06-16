@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Garage Sim</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body,
+    html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #050505;
+      font-family: monospace;
+    }
+
+    /* Fullscreen WebGL Canvas Hook */
+    #game-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    /* Customization Overlay Menu Screen */
+    #garage-menu {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(10, 15, 15, 0.85);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 999;
+    }
+
+    .menu-card {
+      border: 2px solid #00ffcc;
+      background: rgba(0, 0, 0, 0.9);
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 0 25px rgba(0, 255, 204, 0.25);
+      text-align: center;
+      min-width: 340px;
+    }
+
+    .menu-card h1 {
+      color: #00ffcc;
+      margin-bottom: 30px;
+      letter-spacing: 3px;
+      font-size: 24px;
+    }
+
+    .form-group {
+      margin-bottom: 25px;
+      text-align: left;
+    }
+
+    .form-group label {
+      color: #aaa;
+      display: block;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+
+    .form-group select {
+      background: #111;
+      color: #00ffcc;
+      border: 1px solid #00ffcc;
+      padding: 10px;
+      border-radius: 4px;
+      width: 100%;
+      font-family: monospace;
+      outline: none;
+    }
+
+    .color-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 35px;
+    }
+
+    .color-row span {
+      color: #aaa;
+    }
+
+    .color-row input[type="color"] {
+      border: none;
+      background: none;
+      cursor: pointer;
+      width: 55px;
+      height: 32px;
+    }
+
+    .btn-action {
+      background: #00ffcc;
+      color: #000;
+      border: none;
+      padding: 15px 40px;
+      font-weight: bold;
+      font-family: monospace;
+      font-size: 18px;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+      box-shadow: 0 4px 15px rgba(0, 255, 204, 0.3);
+      transition: transform 0.1s, background-color 0.2s;
+    }
+
+    .btn-action:hover {
+      background: #00e6b8;
+    }
+
+    .btn-action:active {
+      transform: scale(0.98);
+    }
+
+    /* Gameplay Dashboard HUD Cockpit Layer */
+    /* #hud {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      color: #00ffcc;
+      font-size: 20px;
+      background: rgba(0, 0, 0, 0.75);
+      padding: 15px;
+      border-radius: 8px;
+      border: 1px solid #00ffcc;
+      line-height: 1.5;
+      z-index: 10;
+      display: none;
+    } */
+
+    /* Basic Loading Banner */
+    #loading {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: #00ffcc;
+      font-size: 16px;
+      z-index: 1000;
+    }
+  </style>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <div id="loading">
+    <div class="loading-text">Loading...</div>
+  </div>
+
+  <!-- Garage Menu -->
+  <div id="garage-menu">
+    <div class="garage-content">
+      <h1 class="garage-title">Car Customization</h1>
+
+      <div class="color-option">
+        <label class="color-label">Rim Color:</label>
+        <input type="color" id="garageRimColorPicker" class="color-input" value="#cccccc">
+      </div>
+
+      <div class="color-option">
+        <label class="color-label">Spoiler Color:</label>
+        <input type="color" id="garageSpoilerColorPicker" class="color-input" value="#ff0000">
+      </div>
+
+      <div class="color-option">
+        <label class="color-label">Bottom Half:</label>
+        <input type="color" id="garageBottomColorPicker" class="color-input" value="#ff0000">
+      </div>
+
+      <div class="color-option">
+        <label class="color-label">Top Half:</label>
+        <input type="color" id="garageTopColorPicker" class="color-input" value="#ff0000">
+      </div>
+
+      <div class="matte-option">
+        <input type="checkbox" id="garageMatteToggle" class="matte-toggle">
+        <label class="matte-label">Matte Finish (vs Glossy)</label>
+      </div>
+
+      <button id="startDriveBtn" class="start-btn">START DRIVING</button>
+    </div>
+  </div>
+
+  <div id="hud">
+    <div class="hud-cluster-wrapper">
+      <div id="engine-broken-overlay">
+        <div class="alert-message">⚠ ENGINE DESTROYED (MONEY SHIFT)</div>
+        <div class="alert-info">Press R to Reset</div>
+      </div>
+
+      <canvas id="hud-gauge-canvas" width="480" height="220"></canvas>
+
+      <div class="hud-gear-digital">
+        <div class="gear-lbl">GEAR</div>
+        <div id="digital-gear-value">1</div>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="game-canvas"></canvas>
+
+  <script type="importmap">
+    {
+        "imports": {
+            "three": "https://esm.sh/three@latest",
+            "three/addons/": "https://esm.sh/three@latest/examples/jsm/",
+            "cannon-es": "https://esm.sh/cannon-es@latest"
+        }
+    }
+    </script>
+  <script>
+    const loading = document.getElementById("loading");
+    loading.style.display = "block";
+
+    window.onload = () => {
+      const ele = document.createElement("script");
+      ele.type = "module";
+      ele.src = "./script.js";
+      document.body.appendChild(ele);
+    }
+  </script>
+  <script type="module" src="./script.js"></script>
+</body>
+
+</html>

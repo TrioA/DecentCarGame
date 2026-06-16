@@ -1,0 +1,20 @@
+{
+  "name": "ailearninggame",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cannon-es": "^0.20.0",
+    "express": "^5.2.1",
+    "postprocessing": "^6.37.7",
+    "realism-effects": "^1.1.2",
+    "three": "^0.179.1",
+    "three.js": "^0.77.0"
+  },
+  "description": ""
+}
