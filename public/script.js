@@ -1426,13 +1426,13 @@ async function initializeSimulation() {
 
 
     /* ===== SKYBOX ===== */
-    await new Promise(res => exrLoader.load('./images/autumn_field_puresky_1k.exr', (texture) => {
+    const exrTexture = await new Promise(res => exrLoader.load('./images/autumn_field_puresky_1k.exr', (texture) => {
         texture.mapping = THREE.EquirectangularReflectionMapping;
         scene.background = texture;
         scene.environment = texture;
         assetsLoading--;
         // if (assetsLoading <= 0) loadingDiv.style.display = 'none';
-        res();
+        res(texture);
     }));
 
 
@@ -1477,6 +1477,55 @@ async function initializeSimulation() {
 
     const outputPass = new OutputPass();
     composer.addPass(outputPass);
+
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsMenu = document.getElementById('settingsMenu');
+    let toggleBloom = document.getElementById('toggleBloom');
+    let toggleAA = document.getElementById('toggleAA');
+    let toggleShadows = document.getElementById('toggleShadows');
+    let toggleSkyBox = document.getElementById('toggleSkyBox');
+    let toggleFog = document.getElementById('toggleFog');
+
+    toggleBloom.addEventListener('click', () => bloomPass.enabled = toggleBloom.checked);
+
+    toggleAA.addEventListener('click', () => fxaaPass.enabled = toggleAA.checked);
+
+    toggleShadows.addEventListener('click', () => dirLight.castShadow = toggleShadows.checked);
+
+    toggleSkyBox.addEventListener('click', () => {
+        if (toggleSkyBox.checked) {
+            scene.background = exrTexture;
+            scene.environment = exrTexture;
+            scene.environmentIntensity = 1;
+        } else {
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.environment = new THREE.Color(0x87CEEB);
+            scene.environmentIntensity = 10;
+        }
+    });
+
+    toggleFog.addEventListener('click', () => scene.fog = toggleFog.checked ? new THREE.Fog(0xc7d1d8, 100, 1800) : null);
+
+    settingsBtn.addEventListener('mousedown', (e) => {
+        if (settingsMenu.classList.contains('active')) {
+            settingsMenu.classList.remove('active');
+        } else {
+            settingsMenu.classList.add('active');
+        }
+    });
+    window.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'o') {
+            settingsMenu.classList.toggle('active');
+        }
+        if (e.key.toLowerCase() === 'escape') {
+            settingsMenu.classList.remove('active');
+        }
+    });
+    canvasElement.addEventListener('mousedown', (e) => {
+        if (e.target !== settingsBtn && e.target !== settingsMenu && e.target.parentElement !== settingsMenu) {
+            settingsMenu.classList.remove('active');
+        }
+    });
 
 
 

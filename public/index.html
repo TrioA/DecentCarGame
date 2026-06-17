@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Project Garage Sim</title>
-  <style>
+  <!--style>
     * {
       box-sizing: border-box;
       margin: 0;
@@ -18,7 +18,7 @@
       height: 100%;
       overflow: hidden;
       background-color: #050505;
-      font-family: monospace;
+      font-family: 'Roboto', monospace;
     }
 
     /* Fullscreen WebGL Canvas Hook */
@@ -156,7 +156,59 @@
       font-size: 16px;
       z-index: 1000;
     }
-  </style>
+
+    /* Settings Menu */
+    #settings-menu {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(10, 15, 15, 0.85);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 999;
+      display: none;
+    }
+
+    .settings-card {
+      border: 2px solid #00ffcc;
+      background: rgba(0, 0, 0, 0.9);
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 0 25px rgba(0, 255, 204, 0.25);
+      text-align: center;
+      width: 300px;
+    }
+
+    .settings-card h2 {
+      color: #00ffcc;
+      margin-bottom: 20px;
+      letter-spacing: 2px;
+      font-size: 22px;
+    }
+
+    .settings-card .form-group {
+      margin-bottom: 15px;
+      text-align: left;
+    }
+
+    .settings-card .form-group label {
+      color: #aaa;
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+
+    .settings-card input[type="range"] {
+      width: 100%;
+    }
+
+    .settings-card .btn-action {
+      margin-top: 20px;
+    }
+  </style-->
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -222,6 +274,31 @@
   </div>
 
   <canvas id="game-canvas"></canvas>
+
+  <button id="settingsBtn"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+      stroke="currentColor" class="size-6">
+      <path stroke-linecap="round" stroke-linejoin="round"
+        d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
+    </svg>
+  </button>
+
+  <div id="settingsMenu">
+    <h1>SETTINGS</h1><br>
+    <hr><br>
+    <!-- Graphics Section -->
+    <!-- Bloom toggle -->
+    <h2>Toggle bloom <input id="toggleBloom" checked type="checkbox" class="setting-checkbox"></h2><br>
+    <!-- Anti aliasing toggle -->
+    <h2>Toggle anti aliasing <input id="toggleAA" checked type="checkbox" class="setting-checkbox"></h2><br>
+    <!-- Shadows toggle -->
+    <h2>Toggle shadows <input id="toggleShadows" checked type="checkbox" class="setting-checkbox"></h2><br>
+    <!-- Sky box toggle -->
+    <h2>Toggle sky box <input id="toggleSkyBox" checked type="checkbox" class="setting-checkbox"></h2><br>
+    <!-- Toggle fog -->
+    <h2>Toggle fog <input id="toggleFog" checked type="checkbox" class="setting-checkbox"></h2><br>
+    <br><br>
+    <button id="closeSettingsBtn">Close</button>
+  </div>
 
   <script type="importmap">
     {
