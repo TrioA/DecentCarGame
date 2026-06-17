@@ -6,6 +6,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import * as CANNON from 'cannon-es';
 import { createNoise2D } from "https://esm.sh/simplex-noise";
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+import { createAnimalFlockSystem } from './animals.js';
 
 
 
@@ -42,6 +43,15 @@ function lerp(a, b, t) {
         return res;
     }
     return a + (b - a) * t;
+}
+
+function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+}
+
+function smoothstep(edge0, edge1, value) {
+    const t = clamp01((value - edge0) / (edge1 - edge0));
+    return t * t * (3 - 2 * t);
 }
 
 /**
@@ -160,6 +170,8 @@ const projScreenMatrix = new THREE.Matrix4();
 } */
 
 const chunkGenerationQueue = [];
+const queuedChunkKeys = new Set();
+let lastChunkReconcileKey = '';
 // FIND where your activeChunks Map is declared and make sure it's accessible:
 
 // --- 3x3 MACRO COLLIDER TRACKING HOOKS ---
@@ -314,7 +326,56 @@ function getTerrainHeight(x, z) {
         baseElevation += rigidFractal * 140.0 * Math.pow(mountainMask, 1.5);
     }
 
-    return baseElevation;
+    const detailMask = smoothstep(4.0, 95.0, baseElevation) * (1.0 - smoothstep(135.0, 170.0, baseElevation));
+    const rollingDetail = seededFractalNoise(x * 0.0065 + 81.7, z * 0.0065 - 19.4, 3, 0.48) * 2.2;
+    const pebbleDetail = noise(x * 0.028, z * 0.028) * 0.42;
+    const ridgeChatter = (1.0 - Math.abs(noise(x * 0.014 - 43.2, z * 0.014 + 12.6))) * 0.65;
+
+    return baseElevation + (rollingDetail + pebbleDetail + ridgeChatter) * detailMask;
+}
+window.getTerrainHeight = getTerrainHeight;
+
+function getTerrainSurfaceInfo(x, z) {
+    const y = getTerrainHeight(x, z);
+    const delta = 1.0;
+    const hL = getTerrainHeight(x - delta, z);
+    const hR = getTerrainHeight(x + delta, z);
+    const hD = getTerrainHeight(x, z - delta);
+    const hU = getTerrainHeight(x, z + delta);
+    const normalY = 2.0 * delta;
+    const slope = 1.0 - (normalY / Math.sqrt((hL - hR) ** 2 + normalY ** 2 + (hD - hU) ** 2));
+
+    const macroX = x * 0.00015;
+    const macroZ = z * 0.00015;
+    const temperature = (noise(macroX, macroZ) + 1.0) * 0.5;
+    const moisture = (noise(macroX + 15.23, macroZ * 1.87) + 1.0) * 0.5;
+
+    let biome = 'lushMeadow';
+    let color = TERRAIN_PALETTE.lushMeadow.color;
+    let grassDensity = 1.0;
+
+    if (y > 145.0 && slope < 0.25) {
+        biome = 'summitSnow';
+        color = TERRAIN_PALETTE.summitSnow.color;
+        grassDensity = 0.0;
+    } else if (slope > 0.35) {
+        biome = 'rockSheer';
+        color = TERRAIN_PALETTE.rockSheer.color;
+        grassDensity = 0.0;
+    } else if (temperature > 0.58 && moisture < 0.42) {
+        biome = 'drySteppe';
+        color = TERRAIN_PALETTE.drySteppe.color;
+        grassDensity = 0.0;
+    } else if (moisture > 0.55) {
+        biome = 'alpineForest';
+        color = TERRAIN_PALETTE.alpineForest.color;
+        grassDensity = 1.15;
+    }
+
+    grassDensity *= clamp01(1.0 - (slope / 0.26));
+    if (y > 128.0) grassDensity *= clamp01(1.0 - ((y - 128.0) / 28.0));
+
+    return { y, slope, temperature, moisture, biome, color, grassDensity };
 }
 
 /**
@@ -330,22 +391,11 @@ function createTerrainChunk(chunkX, chunkZ, lodLevel, scene, camera) {
     const chunkGeo = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, segments, segments);
     chunkGeo.rotateX(-Math.PI / 2);
 
-    // Call our new shared vertex displacement and material group mapper
-    rebuildGeometryData(chunkGeo, chunkX, chunkZ);
-
-    const activeMaterials = terrainMaterialsArray.map(mat => {
-        const clonedMat = mat.clone();
-        // Force crisp flat shading on lower detail tiers (LOD index 3 and up)
-        clonedMat.flatShading = (lodLevel >= 3);
-        clonedMat.needsUpdate = true;
-        return clonedMat;
-    });
-
     const worldOffsetX = chunkX * CHUNK_SIZE;
     const worldOffsetZ = chunkZ * CHUNK_SIZE;
 
     const posAttr = chunkGeo.attributes.position;
-    const colors = [];
+    const colors = new Float32Array(posAttr.count * 3);
 
     for (let i = 0; i < posAttr.count; i++) {
         const localX = posAttr.getX(i);
@@ -353,226 +403,51 @@ function createTerrainChunk(chunkX, chunkZ, lodLevel, scene, camera) {
         const worldX = localX + worldOffsetX;
         const worldZ = localZ + worldOffsetZ;
 
-        const vy = getTerrainHeight(worldX, worldZ);
-        posAttr.setY(i, vy);
-
-        const delta = 1.0;
-        const hL = getTerrainHeight(worldX - delta, worldZ);
-        const hR = getTerrainHeight(worldX + delta, worldZ);
-        const hD = getTerrainHeight(worldX, worldZ - delta);
-        const hU = getTerrainHeight(worldX, worldZ + delta);
-        const normalY = 2.0 * delta;
-        const slope = 1.0 - (normalY / Math.sqrt((hL - hR) ** 2 + normalY ** 2 + (hD - hU) ** 2));
-
-        // --- SCOPE RE-ORDERING FIXED HERE ---
-
-        const macroX = worldX * 0.00015;
-        const macroZ = worldZ * 0.00015;
-        const temperature = (noise(macroX, macroZ) + 1.0) * 0.5;
-        const moisture = (noise(macroX + 15.23, macroZ * 1.87) + 1.0) * 0.5;
+        const surface = getTerrainSurfaceInfo(worldX, worldZ);
+        posAttr.setY(i, surface.y);
 
         let finalColor = new THREE.Color();
 
-        if (vy > 145.0 && slope < 0.25) {
+        if (surface.biome === 'summitSnow') {
             finalColor.copy(TERRAIN_PALETTE.summitSnow.color);
-        } else if (slope > 0.35) {
+        } else if (surface.biome === 'rockSheer') {
             finalColor.copy(TERRAIN_PALETTE.rockSheer.color);
         } else {
-            if (temperature > 0.58 && moisture < 0.42) {
-                finalColor.copy(TERRAIN_PALETTE.drySteppe.color).lerp(TERRAIN_PALETTE.rockSheer.color, slope / 0.35);
-            } else if (moisture > 0.55) {
-                finalColor.copy(TERRAIN_PALETTE.alpineForest.color).lerp(TERRAIN_PALETTE.rockSheer.color, slope / 0.35);
+            if (surface.biome === 'drySteppe') {
+                finalColor.copy(TERRAIN_PALETTE.drySteppe.color).lerp(TERRAIN_PALETTE.rockSheer.color, surface.slope / 0.35);
+            } else if (surface.biome === 'alpineForest') {
+                finalColor.copy(TERRAIN_PALETTE.alpineForest.color).lerp(TERRAIN_PALETTE.rockSheer.color, surface.slope / 0.35);
             } else {
-                finalColor.copy(TERRAIN_PALETTE.lushMeadow.color).lerp(TERRAIN_PALETTE.drySteppe.color, (0.58 - moisture));
+                finalColor.copy(TERRAIN_PALETTE.lushMeadow.color).lerp(TERRAIN_PALETTE.drySteppe.color, (0.58 - surface.moisture));
             }
         }
-        colors.push(finalColor.r, finalColor.g, finalColor.b);
+
+        const colorIndex = i * 3;
+        colors[colorIndex] = finalColor.r;
+        colors[colorIndex + 1] = finalColor.g;
+        colors[colorIndex + 2] = finalColor.b;
     }
 
-    chunkGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    chunkGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     chunkGeo.computeVertexNormals();
 
     const chunkMat = new THREE.MeshStandardMaterial({
         vertexColors: true,
         roughness: TERRAIN_PALETTE.lushMeadow.roughness,
         metalness: TERRAIN_PALETTE.lushMeadow.metalness,
-        flatShading: true
-    }); //*/
+        flatShading: false
+    });
 
-    // Instantiate with your preloaded material array package
     const chunkMesh = new THREE.Mesh(chunkGeo, chunkMat);
     chunkMesh.castShadow = true;
     chunkMesh.receiveShadow = true;
+    chunkMesh.frustumCulled = true;
     chunkMesh.position.set(chunkX * CHUNK_SIZE, 0, chunkZ * CHUNK_SIZE);
     scene.add(chunkMesh);
 
-    // VEGETATION ENGINE: Exclusively render dense instanced grass meshes on high-fidelity (LOD 0) chunks
-    // Grass biome
-    const chunkCenterX = worldOffsetX;
-    const chunkCenterZ = worldOffsetZ;
+    // GRASS GENERATION ENGINE CODE REMOVED FROM HERE
 
-    const camDist = Math.hypot(
-        camera.position.x - chunkCenterX,
-        camera.position.z - chunkCenterZ
-    );
-
-    const GRASS_BY_LOD = [
-        12000, // LOD0
-        6000,  // LOD1
-        2500,  // LOD2
-        750,   // LOD3
-        0,
-        0,
-        0
-    ];
-
-    const grassCount = GRASS_BY_LOD[lodLevel];
-
-    if (grassCount > 0) {
-        const height = Math.random() * 2 + 0.3;
-        const cardGeo = new THREE.PlaneGeometry(1.6, 0.75, 1, 2).translate(0, 0.375 * height, 0);
-        const crossGeo = cardGeo.clone().rotateY(Math.PI / 2);
-
-        let bladeGeo = (typeof BufferGeometryUtils !== 'undefined' && BufferGeometryUtils.mergeGeometries)
-            ? BufferGeometryUtils.mergeGeometries([cardGeo, crossGeo])
-            : cardGeo;
-
-        const normals = new Float32Array(
-            bladeGeo.attributes.position.count * 3
-        );
-
-        for (let i = 0; i < bladeGeo.attributes.position.count; i++) {
-            normals[i * 3 + 0] = 0;
-            normals[i * 3 + 1] = 1;
-            normals[i * 3 + 2] = 0;
-        }
-
-        bladeGeo.setAttribute(
-            "normal",
-            new THREE.BufferAttribute(normals, 3)
-        );
-
-        /* bladeGeo.setAttribute(
-            "normal",
-            new THREE.BufferAttribute(normals, 3)
-        ); */
-
-        if (!grassMaterialGlobal) {
-            const textureLoader = new THREE.TextureLoader();
-            // const grassMap = textureLoader.load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/terrain/grasslight-big.jpg');
-            const grassMap = textureLoader.load('./images/grass-blade.png')
-
-            grassMaterialGlobal = new THREE.MeshLambertMaterial({
-                map: grassMap,
-                color: 0x888888,
-                side: THREE.DoubleSide,
-                transparent: true,
-                alphaTest: 0.4,
-                blendSrc: THREE.SrcAlphaFactor,
-                blendDst: THREE.OneMinusSrcAlphaFactor,
-                emissiveMap: grassMap,
-                emissiveIntensity: 2,
-                emissive: 0x223311,
-                shadowSide: THREE.DoubleSide,
-            });
-            /* grassMaterialGlobal.emissiveMap = grassMap;
-            grassMaterialGlobal.flatShading = true;
-            grassMaterialGlobal.shadowSide = THREE.DoubleSide;
-            grassMaterialGlobal.emissive.setHex(0x223311);
-            grassMaterialGlobal.emissiveIntensity = 2; */
-
-            grassMaterialGlobal.onBeforeCompile = (shader) => {
-                shader.uniforms.uTime = { value: 0 };
-                grassMaterialGlobal.userData.shaderUniforms = shader.uniforms;
-                shader.vertexShader = `uniform float uTime;\n` + shader.vertexShader;
-                shader.vertexShader = shader.vertexShader.replace(
-                    `#include <begin_vertex>`,
-                    `#include <begin_vertex>\nfloat hF = uv.y;\ntransformed.x += sin(uTime * 2.2 + position.x * 2.5 + position.z * 1.8) * 0.14 * hF;\ntransformed.z += cos(uTime * 1.8 + position.x * 1.5 + position.z * 2.4) * 0.09 * hF;`
-                );
-                /* shader.vertexShader = shader.vertexShader.replace(
-                    `#include <beginnormal_vertex>`,
-                    `#include <beginnormal_vertex>\nobjectNormal = normalize(vec3(0.0, 1.0, 0.0));`
-                ); */
-            };
-        }
-
-        // const normals = [];
-
-        /* for (let i = 0; i < bladeGeo.attributes.position.count; i++) {
-            normals.push(0, 1, 1);
-        }
-
-        bladeGeo.setAttribute(
-            "normal",
-            new THREE.Float32BufferAttribute(normals, 3)
-        ); */
-
-        const grassMesh = new THREE.InstancedMesh(bladeGeo, grassMaterialGlobal, grassCount);
-        grassMesh.frustumCulled = true;
-        grassMesh.castShadow = true;
-        grassMesh.receiveShadow = true;
-        grassMesh.computeBoundingSphere();
-        grassMesh.computeBoundingBox();
-        const dummy = new THREE.Object3D();
-        let spawned = 0;
-
-        for (let k = 0; k < grassCount * 2; k++) {
-            // if (spawned >= grassCount) break;
-
-            const rx = (Math.random() - 0.5) * CHUNK_SIZE;
-            const rz = (Math.random() - 0.5) * CHUNK_SIZE;
-            const wx = worldOffsetX + rx;
-            const wz = worldOffsetZ + rz;
-
-            const macroX = wx * 0.00015;
-            const macroZ = wz * 0.00015;
-            const temperature = (noise(macroX, macroZ) + 1.0) * 0.5;
-            const moisture = (noise(macroX + 15.23, macroZ * 1.87) + 1.0) * 0.5;
-
-            // console.log("haha");
-
-            // Continue if not grass
-            // if ((temperature > 0.58 && moisture < 0.42 && moisture > 0.55)) continue;
-            // if (temperature < 0.58 || (moisture > 0.42 && moisture < 0.55)) continue;
-            const isAlpineForest = moisture > 0.55;
-            const isMeadow = !(temperature > 0.58 && moisture < 0.42) && !isAlpineForest;
-
-            if (!isAlpineForest && !isMeadow) continue;
-
-            const density =
-                (noise(
-                    wx * 0.002,
-                    wz * 0.002
-                ) + 1) * 0.5;
-
-            if (Math.random() >= density) continue;
-
-            const vy = getTerrainHeight(wx, wz);
-            // if (Math.sqrt(wx * wx + wz * wz) < 120) continue;
-
-            dummy.position.set(rx, vy, rz);
-            dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
-            dummy.scale.set(0.8 + Math.random() * 0.4, 0.7 + Math.random() * 0.6, 0.8 + Math.random() * 0.4);
-            dummy.updateMatrix();
-            grassMesh.setMatrixAt(spawned, dummy.matrix);
-
-            const cB = new THREE.Color(0x3e542b).lerp(new THREE.Color(0x5a7541), Math.random());
-            grassMesh.setColorAt(spawned, cB);
-            spawned++;
-        }
-
-        grassMesh.instanceMatrix.needsUpdate = true;
-        const radius = CHUNK_SIZE * 0.75;
-
-        grassMesh.boundingSphere = new THREE.Sphere(
-            new THREE.Vector3(0, 40, 0),
-            radius
-        );
-        if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
-        chunkMesh.add(grassMesh);
-    }
-
-    return { chunkMesh, lodLevel, originalMaterials: activeMaterials };
+    return { chunkMesh, lodLevel };
 }
 
 /**
@@ -593,59 +468,86 @@ function createTerrainChunk(chunkX, chunkZ, lodLevel, scene, camera) {
  * Instead of waiting for unloads, this alters plane geometry segments and 
  * updates material group ranges dynamically as the car approaches or retreats.
  */
-function updateDynamicWorldChunks(playerX, playerZ, scene, camera) {
+function queueChunkGenerationTask(task) {
+    if (queuedChunkKeys.has(task.key)) return;
+    queuedChunkKeys.add(task.key);
+    chunkGenerationQueue.push(task);
+}
+
+function disposeChunkMesh(mesh) {
+    mesh.traverse((child) => {
+        if (child.isInstancedMesh && child.geometry) child.geometry.dispose();
+    });
+
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(mat => mat.dispose());
+    } else if (mesh.material) {
+        mesh.material.dispose();
+    }
+}
+
+function updateDynamicWorldChunks(playerX, playerZ, scene, camera, dt = 0) {
     const currentChunkX = Math.round(playerX / CHUNK_SIZE);
     const currentChunkZ = Math.round(playerZ / CHUNK_SIZE);
+    const reconcileKey = `${currentChunkX},${currentChunkZ}`;
     const keptKeys = new Set();
+    const shouldReconcile = reconcileKey !== lastChunkReconcileKey || activeChunks.size === 0;
 
     // 1. Scan footprint and check if any chunk's active target LOD has changed
-    for (let x = -CHUNK_RADIUS; x <= CHUNK_RADIUS; x++) {
-        for (let z = -CHUNK_RADIUS; z <= CHUNK_RADIUS; z++) {
-            const targetX = currentChunkX + x;
-            const targetZ = currentChunkZ + z;
-            const key = `${targetX},${targetZ}`;
-            keptKeys.add(key);
+    if (shouldReconcile) {
+        lastChunkReconcileKey = reconcileKey;
 
-            // Progressive Ring mapping rules
-            const distance = Math.max(Math.abs(x), Math.abs(z));
-            let targetLod = 6;
-            if (distance <= 1) targetLod = 0;      // Super High Definition (128 segs)
-            else if (distance === 2) targetLod = 1; // 96 segs
-            else if (distance === 3) targetLod = 2; // 64 segs
-            else if (distance === 4) targetLod = 3; // 32 segs
-            else if (distance === 5) targetLod = 4; // 16 segs
-            else if (distance === 6) targetLod = 5; // 8 segs
+        for (let x = -CHUNK_RADIUS; x <= CHUNK_RADIUS; x++) {
+            for (let z = -CHUNK_RADIUS; z <= CHUNK_RADIUS; z++) {
+                const targetX = currentChunkX + x;
+                const targetZ = currentChunkZ + z;
+                const key = `${targetX},${targetZ}`;
+                keptKeys.add(key);
 
-            if (activeChunks.has(key)) {
-                const chunkData = activeChunks.get(key);
+                // Progressive Ring mapping rules
+                const distance = Math.max(Math.abs(x), Math.abs(z));
+                let targetLod = 6;
+                if (distance <= 1) targetLod = 0;      // Super High Definition (128 segs)
+                else if (distance === 2) targetLod = 1; // 64 segs
+                else if (distance === 3) targetLod = 2; // 32 segs
+                else if (distance === 4) targetLod = 3; // 16 segs
+                else if (distance === 5) targetLod = 4; // 8 segs
+                else if (distance === 6) targetLod = 5; // 4 segs
 
-                // CRITICAL DYNAMIC TRIGGER: If the chunk's current LOD doesn't match where the player is, morph it!
-                if (chunkData.lodLevel !== targetLod) {
-                    const alreadyQueued = chunkGenerationQueue.some(item => item.key === key);
-                    if (!alreadyQueued) {
-                        chunkGenerationQueue.push({ key, chunkX: targetX, chunkZ: targetZ, lod: targetLod, isMorph: true });
+                if (activeChunks.has(key)) {
+                    const chunkData = activeChunks.get(key);
+
+                    // CRITICAL DYNAMIC TRIGGER: If the chunk's current LOD doesn't match where the player is, morph it!
+                    if (chunkData.lodLevel !== targetLod) {
+                        queueChunkGenerationTask({ key, chunkX: targetX, chunkZ: targetZ, lod: targetLod, isMorph: true });
                     }
+                } else {
+                    // Not spawned yet: Queue fresh registration task
+                    queueChunkGenerationTask({ key, chunkX: targetX, chunkZ: targetZ, lod: targetLod, isMorph: false });
                 }
-            } else {
-                // Not spawned yet: Queue fresh registration task
-                const alreadyQueued = chunkGenerationQueue.some(item => item.key === key);
-                if (!alreadyQueued) {
-                    chunkGenerationQueue.push({ key, chunkX: targetX, chunkZ: targetZ, lod: targetLod, isMorph: false });
-                }
+            }
+        }
+
+        // 2. Sort Queue: Focus resources immediately on what's closest to the bumper
+        chunkGenerationQueue.sort((a, b) => {
+            const distA = Math.max(Math.abs(a.chunkX - currentChunkX), Math.abs(a.chunkZ - currentChunkZ));
+            const distB = Math.max(Math.abs(b.chunkX - currentChunkX), Math.abs(b.chunkZ - currentChunkZ));
+            return distA - distB;
+        });
+    } else {
+        for (let x = -CHUNK_RADIUS; x <= CHUNK_RADIUS; x++) {
+            for (let z = -CHUNK_RADIUS; z <= CHUNK_RADIUS; z++) {
+                keptKeys.add(`${currentChunkX + x},${currentChunkZ + z}`);
             }
         }
     }
 
-    // 2. Sort Queue: Focus resources immediately on what's closest to the bumper
-    chunkGenerationQueue.sort((a, b) => {
-        const distA = Math.max(Math.abs(a.chunkX - currentChunkX), Math.abs(a.chunkZ - currentChunkZ));
-        const distB = Math.max(Math.abs(b.chunkX - currentChunkX), Math.abs(b.chunkZ - currentChunkZ));
-        return distA - distB;
-    });
-
-    // 3. FRAME BUDGET CONSUMPTION: Morph or build exactly ONE chunk per animation frame
-    if (chunkGenerationQueue.length > 0) {
+    // 3. FRAME BUDGET CONSUMPTION: Build cautiously during slow frames and faster while bootstrapping.
+    const taskBudget = activeChunks.size < 12 ? 2 : (dt > 0.028 ? 0 : 1);
+    for (let taskIndex = 0; taskIndex < taskBudget && chunkGenerationQueue.length > 0; taskIndex++) {
         const task = chunkGenerationQueue.shift();
+        queuedChunkKeys.delete(task.key);
 
         if (keptKeys.has(task.key)) {
             if (task.isMorph && activeChunks.has(task.key)) {
@@ -657,16 +559,7 @@ function updateDynamicWorldChunks(playerX, playerZ, scene, camera) {
                 const newMesh = newChunkData.chunkMesh;
 
                 scene.remove(oldMesh);
-                oldMesh.geometry.dispose();
-                if (Array.isArray(oldMesh.material)) {
-                    oldMesh.material.forEach(mat => mat.dispose());
-                } else if (oldMesh.material) {
-                    oldMesh.material.dispose();
-                }
-
-                oldMesh.traverse((child) => {
-                    if (child.isInstancedMesh) child.geometry.dispose();
-                });
+                disposeChunkMesh(oldMesh);
 
                 existingChunk.chunkMesh = newMesh;
                 existingChunk.lodLevel = task.lod;
@@ -716,18 +609,19 @@ function updateDynamicWorldChunks(playerX, playerZ, scene, camera) {
     }
 
     // 4. Garbage Collection Loop (Instantly unloads chunks that slip out of view)
-    for (const [key, chunkData] of activeChunks.entries()) {
-        if (!keptKeys.has(key)) {
-            scene.remove(chunkData.chunkMesh);
-            chunkData.chunkMesh.geometry.dispose();
-            // If the array structure holds attached meshes/vegetation, clean them up
-            chunkData.chunkMesh.traverse((child) => {
-                if (child.isInstancedMesh) child.geometry.dispose();
-            });
-            activeChunks.delete(key);
+    if (shouldReconcile) {
+        for (const [key, chunkData] of activeChunks.entries()) {
+            if (!keptKeys.has(key)) {
+                scene.remove(chunkData.chunkMesh);
+                disposeChunkMesh(chunkData.chunkMesh);
+                activeChunks.delete(key);
 
-            const qIdx = chunkGenerationQueue.findIndex(item => item.key === key);
-            if (qIdx !== -1) chunkGenerationQueue.splice(qIdx, 1);
+                const qIdx = chunkGenerationQueue.findIndex(item => item.key === key);
+                if (qIdx !== -1) {
+                    queuedChunkKeys.delete(key);
+                    chunkGenerationQueue.splice(qIdx, 1);
+                }
+            }
         }
     }
 }
@@ -940,6 +834,265 @@ function updateStreamingPhysicsFloor(playerX, playerZ, world) {
     scene.add(instancedMesh);
     return grassMat;
 } */
+
+const GRASS_PATCH_SIZE = 28;
+const GRASS_RADIUS = 185;
+const GRASS_INNER_RADIUS = 72;
+const GRASS_MAX_BLADES_PER_PATCH = 190;
+const GRASS_PATCH_BUILDS_PER_FRAME = 3;
+const GRASS_RECONCILE_INTERVAL = 0.18;
+
+function hashToUnit(seed) {
+    seed |= 0;
+    seed = (seed ^ 61) ^ (seed >>> 16);
+    seed = Math.imul(seed, 9);
+    seed = seed ^ (seed >>> 4);
+    seed = Math.imul(seed, 0x27d4eb2d);
+    seed = seed ^ (seed >>> 15);
+    return ((seed >>> 0) / 4294967295);
+}
+
+function seededPatchRandom(patchX, patchZ, index, salt = 0) {
+    const seed = Math.imul(patchX, 73856093) ^ Math.imul(patchZ, 19349663) ^ Math.imul(index + 1, 83492791) ^ salt;
+    return hashToUnit(seed);
+}
+
+function createGrassBladeGeometry() {
+    const cardGeo = new THREE.PlaneGeometry(2.5, 1.2, 1, 2);
+    cardGeo.translate(0, 0.4, 0);
+
+    const crossGeo = cardGeo.clone();
+    crossGeo.rotateY(Math.PI / 2);
+
+    const bladeGeo = BufferGeometryUtils.mergeGeometries([cardGeo, crossGeo]);
+    bladeGeo.computeBoundingSphere();
+    return bladeGeo;
+}
+
+function createGrassMaterial() {
+    const grassMap = textureLoader.load('./images/grass-blade.png');
+    grassMap.colorSpace = THREE.SRGBColorSpace;
+
+    const grassMat = new THREE.MeshLambertMaterial({
+        map: grassMap,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.9,
+        vertexColors: true,
+        emissive: 0xffccff,
+        emissiveMap: grassMap,
+        emissiveIntensity: 0.5,
+        depthWrite: false,
+        depthTest: true,
+    });
+
+    grassMat.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = { value: 0 };
+        grassMat.userData.shaderUniforms = shader.uniforms;
+
+        shader.vertexShader = `
+            uniform float uTime;
+        ` + shader.vertexShader;
+
+        shader.vertexShader = shader.vertexShader.replace(
+            `#include <begin_vertex>`,
+            `
+            #include <begin_vertex>
+            float heightFactor = uv.y;
+            float worldWave = sin(uTime * 1.7 + instanceMatrix[3].x * 0.08 + instanceMatrix[3].z * 0.06);
+            transformed.x += worldWave * 0.11 * heightFactor;
+            transformed.z += cos(uTime * 1.3 + instanceMatrix[3].x * 0.05) * 0.07 * heightFactor;
+            `
+        );
+    };
+
+    return grassMat;
+}
+
+function createGrassSystem(scene) {
+    const group = new THREE.Group();
+    group.name = 'CameraDistanceGrassSystem';
+    scene.add(group);
+
+    const material = createGrassMaterial();
+    const geometry = createGrassBladeGeometry();
+
+    return {
+        group,
+        material,
+        geometry,
+        patches: new Map(),
+        queuedPatchKeys: new Set(),
+        patchQueue: [],
+        reconcileTimer: 0,
+        lastCenterX: Number.POSITIVE_INFINITY,
+        lastCenterZ: Number.POSITIVE_INFINITY,
+        dummy: new THREE.Object3D(),
+        baseGrassColor: new THREE.Color(0x355f25),
+        meadowTipColor: new THREE.Color(0x7ea84b),
+        dryGrassColor: new THREE.Color(0x9a8a45),
+        forestGrassColor: new THREE.Color(0x2e5c36)
+    };
+}
+
+function disposeGrassPatch(system, key) {
+    const patch = system.patches.get(key);
+    if (patch && patch.mesh) {
+        system.group.remove(patch.mesh);
+    }
+    system.patches.delete(key);
+    system.queuedPatchKeys.delete(key);
+}
+
+function queueGrassPatch(system, key, patchX, patchZ) {
+    if (system.patches.has(key) || system.queuedPatchKeys.has(key)) return;
+    system.queuedPatchKeys.add(key);
+    system.patchQueue.push({ key, patchX, patchZ });
+}
+
+function buildGrassPatch(system, task, cameraX, cameraZ) {
+    const patchMinX = task.patchX * GRASS_PATCH_SIZE;
+    const patchMinZ = task.patchZ * GRASS_PATCH_SIZE;
+    const centerX = patchMinX + GRASS_PATCH_SIZE * 0.5;
+    const centerZ = patchMinZ + GRASS_PATCH_SIZE * 0.5;
+    const distanceFromCamera = Math.hypot(centerX - cameraX, centerZ - cameraZ);
+    const distanceDensity = Math.pow(1.0 - smoothstep(GRASS_INNER_RADIUS, GRASS_RADIUS, distanceFromCamera), 1.85);
+
+    if (distanceDensity <= 0.02) {
+        system.patches.set(task.key, { mesh: null });
+        return;
+    }
+
+    const mesh = new THREE.InstancedMesh(system.geometry, system.material, GRASS_MAX_BLADES_PER_PATCH);
+    mesh.name = `grass-patch-${task.key}`;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.frustumCulled = true;
+    mesh.position.set(patchMinX, 0, patchMinZ);
+
+    let spawned = 0;
+    const candidates = GRASS_MAX_BLADES_PER_PATCH * 4;
+
+    for (let i = 0; i < candidates && spawned < GRASS_MAX_BLADES_PER_PATCH; i++) {
+        const localX = seededPatchRandom(task.patchX, task.patchZ, i, 101) * GRASS_PATCH_SIZE;
+        const localZ = seededPatchRandom(task.patchX, task.patchZ, i, 211) * GRASS_PATCH_SIZE;
+        const worldX = patchMinX + localX;
+        const worldZ = patchMinZ + localZ;
+        const surface = getTerrainSurfaceInfo(worldX, worldZ);
+
+        if (surface.grassDensity <= 0.02) continue;
+
+        const bladeDistance = Math.hypot(worldX - cameraX, worldZ - cameraZ);
+        const bladeDistanceDensity = Math.pow(1.0 - smoothstep(GRASS_INNER_RADIUS, GRASS_RADIUS, bladeDistance), 1.7);
+        const localClump = 0.45 + seededPatchRandom(task.patchX, task.patchZ, i, 809) * 0.85;
+        const density = Math.min(1.0, surface.grassDensity * bladeDistanceDensity * localClump);
+        if (seededPatchRandom(task.patchX, task.patchZ, i, 307) > density) continue;
+
+        const yaw = seededPatchRandom(task.patchX, task.patchZ, i, 401) * Math.PI * 2;
+        const scaleXZ = 0.75 + seededPatchRandom(task.patchX, task.patchZ, i, 503) * 0.5;
+        const scaleY = 0.55 + seededPatchRandom(task.patchX, task.patchZ, i, 607) * 0.7;
+
+        system.dummy.position.set(localX, surface.y - 0.02, localZ);
+        system.dummy.rotation.set(0, yaw, 0);
+        system.dummy.scale.set(scaleXZ, scaleY, scaleXZ);
+        system.dummy.updateMatrix();
+        mesh.setMatrixAt(spawned, system.dummy.matrix);
+
+        const colorMix = seededPatchRandom(task.patchX, task.patchZ, i, 709);
+        const color = system.baseGrassColor.clone();
+        if (surface.biome === 'drySteppe') {
+            color.lerp(system.dryGrassColor, 0.65 + colorMix * 0.25);
+        } else if (surface.biome === 'alpineForest') {
+            color.copy(system.forestGrassColor).lerp(system.meadowTipColor, colorMix * 0.35);
+        } else {
+            color.lerp(system.meadowTipColor, colorMix * 0.75);
+        }
+        mesh.setColorAt(spawned, color);
+
+        spawned++;
+    }
+
+    if (spawned === 0) {
+        system.patches.set(task.key, { mesh: null });
+        return;
+    }
+
+    mesh.count = spawned;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingBox();
+    mesh.computeBoundingSphere();
+
+    system.group.add(mesh);
+    system.patches.set(task.key, { mesh });
+}
+
+function updateGrassSystem(system, camera, dt) {
+    if (!system) return;
+
+    system.reconcileTimer += dt;
+    const cameraX = camera.position.x;
+    const cameraZ = camera.position.z;
+    const movedEnough = Math.hypot(cameraX - system.lastCenterX, cameraZ - system.lastCenterZ) > GRASS_PATCH_SIZE * 0.45;
+
+    if (movedEnough || system.reconcileTimer >= GRASS_RECONCILE_INTERVAL) {
+        system.reconcileTimer = 0;
+        system.lastCenterX = cameraX;
+        system.lastCenterZ = cameraZ;
+
+        const centerPatchX = Math.floor(cameraX / GRASS_PATCH_SIZE);
+        const centerPatchZ = Math.floor(cameraZ / GRASS_PATCH_SIZE);
+        const patchRadius = Math.ceil(GRASS_RADIUS / GRASS_PATCH_SIZE);
+        const wantedKeys = new Set();
+
+        for (let x = -patchRadius; x <= patchRadius; x++) {
+            for (let z = -patchRadius; z <= patchRadius; z++) {
+                const patchX = centerPatchX + x;
+                const patchZ = centerPatchZ + z;
+                const patchCenterX = (patchX + 0.5) * GRASS_PATCH_SIZE;
+                const patchCenterZ = (patchZ + 0.5) * GRASS_PATCH_SIZE;
+                const patchDistance = Math.hypot(patchCenterX - cameraX, patchCenterZ - cameraZ);
+                if (patchDistance > GRASS_RADIUS) continue;
+
+                const key = `${patchX},${patchZ}`;
+                const existingPatch = system.patches.get(key);
+                if (existingPatch && !existingPatch.mesh && patchDistance < GRASS_RADIUS - GRASS_PATCH_SIZE) {
+                    system.patches.delete(key);
+                }
+
+                wantedKeys.add(key);
+                queueGrassPatch(system, key, patchX, patchZ);
+            }
+        }
+
+        for (const key of system.patches.keys()) {
+            if (!wantedKeys.has(key)) disposeGrassPatch(system, key);
+        }
+
+        system.patchQueue = system.patchQueue.filter(task => {
+            const keep = wantedKeys.has(task.key);
+            if (!keep) system.queuedPatchKeys.delete(task.key);
+            return keep;
+        });
+
+        system.patchQueue.sort((a, b) => {
+            const ax = (a.patchX + 0.5) * GRASS_PATCH_SIZE;
+            const az = (a.patchZ + 0.5) * GRASS_PATCH_SIZE;
+            const bx = (b.patchX + 0.5) * GRASS_PATCH_SIZE;
+            const bz = (b.patchZ + 0.5) * GRASS_PATCH_SIZE;
+            return Math.hypot(ax - cameraX, az - cameraZ) - Math.hypot(bx - cameraX, bz - cameraZ);
+        });
+    }
+
+    const patchBudget = dt > 0.028 ? 1 : GRASS_PATCH_BUILDS_PER_FRAME;
+    for (let i = 0; i < patchBudget && system.patchQueue.length > 0; i++) {
+        const task = system.patchQueue.shift();
+        system.queuedPatchKeys.delete(task.key);
+        if (!system.patches.has(task.key)) {
+            buildGrassPatch(system, task, cameraX, cameraZ);
+        }
+    }
+}
 
 
 
@@ -1375,6 +1528,8 @@ async function initializeSimulation() {
 
 
     const groundMaterial = new CANNON.Material('ground');
+    groundMaterial.friction = 0.82;
+    groundMaterial.restitution = 0.02;
     /* const groundBody = new CANNON.Body({ mass: 0, material: groundMaterial });
     groundBody.addShape(new CANNON.Plane());
     groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
@@ -1483,6 +1638,8 @@ async function initializeSimulation() {
     // grassMaterialPointer = createInstancedGrass(scene);
     updateStreamingPhysicsFloor(0, 0, world);
     updateDynamicWorldChunks(0, 0, scene, camera);
+    const grassSystem = createGrassSystem(scene);
+    grassMaterialGlobal = grassSystem.material;
 
 
 
@@ -1670,18 +1827,30 @@ async function initializeSimulation() {
 
 
 
-    const chassisBody = new CANNON.Body({ mass: 1500 });
+    const chassisMaterial = new CANNON.Material('car-body');
+    chassisMaterial.friction = 0.42;
+    chassisMaterial.restitution = 0.3;
+
+    const chassisBody = new CANNON.Body({
+        mass: 1500,
+        material: chassisMaterial,
+        linearDamping: 0.08,
+        angularDamping: 0.62
+    });
+    // (0.9, 0.25, 2.15)
     chassisBody.addShape(new CANNON.Box(new CANNON.Vec3(0.9, 0.25, 2.15)), new CANNON.Vec3(0, -0.32, 0.2));
     chassisBody.position.set(0, 1.8, 0);
-    chassisBody.linearDamping = 0.1;
-    chassisBody.angularDamping = 0.5;
     world.addBody(chassisBody);
+
+    const animalFlockSystem = createAnimalFlockSystem(scene, world, chassisBody);
 
 
 
     /* ===== RAYCAST VEHICLE SYSTEM ===== */
     const vehicle = new CANNON.RaycastVehicle({ chassisBody, indexUpAxis: 1, indexForwardAxis: 2 });
     const wheelMaterial = new CANNON.Material('wheel');
+    wheelMaterial.friction = 1.05;
+    wheelMaterial.restitution = 0.0;
 
 
 
@@ -1691,15 +1860,15 @@ async function initializeSimulation() {
         axleLocal: new CANNON.Vec3(0, 0, -1),
 
         // Smooth & Responsive Steering Front End Tuning
-        suspensionStiffness: 24.0,       // Softened down from 35 to absorb initial slope transitions
-        suspensionRestLength: 0.55,      // Increased from 0.4 to give deeper compression room
-        maxSuspensionTravel: 0.35,       // Increased from 0.15 so front wheels don't slam into bottom-out limits
-        dampingRelaxation: 3.6,          // Raised from 2.8 to actively trap energy as the front springs unload
-        dampingCompression: 2.4,         // Slightly tuned up to handle heavy braking loads smoothly
+        suspensionStiffness: 20.0,       // Firm enough for control, soft enough to track the noisier terrain
+        suspensionRestLength: 0.62,      // More droop/compression room for high-detail ground
+        maxSuspensionTravel: 0.48,       // Prevents sharp detail from bottoming the raycast instantly
+        dampingRelaxation: 5.2,          // Catches rebound so bumps do not launch the chassis
+        dampingCompression: 3.5,         // Absorbs impacts without feeling like a dead spring
 
-        frictionSlip: 7.5,
-        rollInfluence: 0.01,
-        maxSuspensionForce: 1e5          // Lowered from 1e12 to stop infinite physics forces from snapping the car skyward
+        frictionSlip: 8.0,
+        rollInfluence: 0.015,
+        maxSuspensionForce: 90000
     };
 
     const rearWheelOptions = {
@@ -1708,15 +1877,15 @@ async function initializeSimulation() {
         axleLocal: new CANNON.Vec3(0, 0, -1),
 
         // Squatting & Drift-Stable Rear End Tuning
-        suspensionStiffness: 20.0,       // Softer rear allows the car to squat during power delivery and absorb bumps
-        suspensionRestLength: 0.55,      // Matching travel line height to keep the vehicle balanced flat
-        maxSuspensionTravel: 0.35,       // Deep travel room prevents landing impacts from bouncing the rear end up
-        dampingRelaxation: 4.0,          // Stronger relaxation catching helps lock the tail down during high speed drifts
-        dampingCompression: 2.2,         // Keeps wheel tracking stuck smoothly to the valleys and ridges
+        suspensionStiffness: 24.0,       // Softer rear keeps squat and grip over rougher procedural detail
+        suspensionRestLength: 0.64,      // Slightly deeper rear travel for acceleration over bumps
+        maxSuspensionTravel: 0.5,        // Keeps rear contact stable without pogoing
+        dampingRelaxation: 5.6,          // Strong rebound control over noisy terrain
+        dampingCompression: 3.25,        // Smooths compression while preserving response
 
-        frictionSlip: 8.5,
-        rollInfluence: 0.01,
-        maxSuspensionForce: 1e5          // Protects against infinite force spikes over complex Perlin hill seams
+        frictionSlip: 9.0,
+        rollInfluence: 0.012,
+        maxSuspensionForce: 90000
     };
 
 
@@ -1738,7 +1907,21 @@ async function initializeSimulation() {
 
 
     world.addContactMaterial(new CANNON.ContactMaterial(groundMaterial, wheelMaterial, {
-        friction: 0.9, restitution: 0.0, contactEquationStiffness: 1e8, contactEquationRelaxation: 3
+        friction: 1.05,
+        restitution: 0.0,
+        contactEquationStiffness: 7e7,
+        contactEquationRelaxation: 4,
+        frictionEquationStiffness: 1e7,
+        frictionEquationRelaxation: 3
+    }));
+
+    world.addContactMaterial(new CANNON.ContactMaterial(groundMaterial, chassisMaterial, {
+        friction: 0.42,
+        restitution: 0.02,
+        contactEquationStiffness: 4e7,
+        contactEquationRelaxation: 5,
+        frictionEquationStiffness: 4e6,
+        frictionEquationRelaxation: 4
     }));
 
 
@@ -2010,6 +2193,10 @@ async function initializeSimulation() {
 
     resetCarParallelToGround(chassisBody, carVisualChassis);
 
+    // new CANNON.Vec3(0.9, 0.25, 2.15)
+    const aRandomMesh = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1, 2.25));
+    scene.add(aRandomMesh);
+
 
 
     /* ===== INTERNAL ANIMATE FRAMELOOP ===== */
@@ -2027,11 +2214,17 @@ async function initializeSimulation() {
 
         dirLight.target.updateMatrixWorld();
 
+        aRandomMesh.position.copy(chassisBody.position);
+
         // groundBody.position.set(chassisBody.position.x, -10, chassisBody.position.z);
         // Physics body
         // Visual mesh
         /* planeMesh.position.set(Math.floor(chassisBody.position.x / 10) * 10, 0, Math.floor(chassisBody.position.z / 10) * 10);
         groundBody.position.set(planeMesh.position.x, -10, planeMesh.position.z); */
+
+        if (animalFlockSystem && typeof animalFlockSystem.update === 'function') {
+            animalFlockSystem.update(dt, chassisBody);
+        }
 
 
 
@@ -2216,7 +2409,8 @@ async function initializeSimulation() {
             updateStreamingPhysicsFloor(chassisBody.position.x, chassisBody.position.z, world);
 
             // 2. Then update your surrounding graphics rendering layout chunks
-            updateDynamicWorldChunks(camera.position.x, camera.position.z, scene, camera);
+            updateDynamicWorldChunks(camera.position.x, camera.position.z, scene, camera, dt);
+            updateGrassSystem(grassSystem, camera, dt);
         }
 
         // Maintain wind uniform timelines smoothly
@@ -2226,7 +2420,11 @@ async function initializeSimulation() {
 
         updateProceduralAudio(currentRPM, isCarCurrentlyDrifting, isEngineBroken);
 
-        world.step(1 / 120, dt, 10);
+        world.step(dt, dt, 10);
+
+        if (animalFlockSystem && typeof animalFlockSystem.syncMeshes === 'function') {
+            animalFlockSystem.syncMeshes(camera);
+        }
 
 
 
@@ -2282,6 +2480,7 @@ async function initializeSimulation() {
         const newCamOffset = camOffset.clone().multiply(new THREE.Vector3(1, Math.min(1, 50 / Math.max(0.001, speed)), 1));
         // console.log(newCamOffset);
         const camGoal = newCamOffset.applyQuaternion(carVisualChassis.quaternion).add(carPos);
+        camGoal.setY(Math.abs(camGoal.y));
         camera.position.lerp(camGoal, 0.1);
         // camera.position.setY(5);
         targetLook.lerp(carPos, 0.1);

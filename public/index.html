@@ -196,6 +196,11 @@
         <label class="matte-label">Matte Finish (vs Glossy)</label>
       </div>
 
+      <div class="matte-option">
+        <input type="checkbox" id="animalSpawnToggle" class="matte-toggle">
+        <label class="matte-label">Matte Finish (vs Glossy)</label>
+      </div>
+
       <button id="startDriveBtn" class="start-btn">START DRIVING</button>
     </div>
   </div>
@@ -228,17 +233,6 @@
         }
     }
     </script>
-  <script>
-    const loading = document.getElementById("loading");
-    loading.style.display = "block";
-
-    window.onload = () => {
-      const ele = document.createElement("script");
-      ele.type = "module";
-      ele.src = "./script.js";
-      document.body.appendChild(ele);
-    }
-  </script>
   <script type="module" src="./script.js"></script>
 </body>
 
