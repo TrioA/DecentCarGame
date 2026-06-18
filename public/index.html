@@ -250,7 +250,7 @@
 
       <div class="matte-option">
         <input type="checkbox" id="animalSpawnToggle" class="matte-toggle">
-        <label class="matte-label">Matte Finish (vs Glossy)</label>
+        <label class="matte-label">Spawn Animals?</label>
       </div>
 
       <button id="startDriveBtn" class="start-btn">START DRIVING</button>
@@ -287,15 +287,22 @@
     <hr><br>
     <!-- Graphics Section -->
     <!-- Bloom toggle -->
-    <h2>Toggle bloom <input id="toggleBloom" checked type="checkbox" class="setting-checkbox"></h2><br>
-    <!-- Anti aliasing toggle -->
-    <h2>Toggle anti aliasing <input id="toggleAA" checked type="checkbox" class="setting-checkbox"></h2><br>
-    <!-- Shadows toggle -->
-    <h2>Toggle shadows <input id="toggleShadows" checked type="checkbox" class="setting-checkbox"></h2><br>
-    <!-- Sky box toggle -->
-    <h2>Toggle sky box <input id="toggleSkyBox" checked type="checkbox" class="setting-checkbox"></h2><br>
-    <!-- Toggle fog -->
-    <h2>Toggle fog <input id="toggleFog" checked type="checkbox" class="setting-checkbox"></h2><br>
+    <div class="settings-section">
+      <h2>Toggle bloom <input id="toggleBloom" checked type="checkbox" class="setting-checkbox"></h2><br>
+      <!-- Anti aliasing toggle -->
+      <h2>Toggle anti aliasing <input id="toggleAA" checked type="checkbox" class="setting-checkbox"></h2><br>
+      <!-- Shadows toggle -->
+      <h2>Toggle shadows <input id="toggleShadows" checked type="checkbox" class="setting-checkbox"></h2><br>
+      <!-- Sky box toggle -->
+      <h2>Toggle sky box <input id="toggleSkyBox" checked type="checkbox" class="setting-checkbox"></h2><br>
+      <!-- Toggle fog -->
+      <h2>Toggle fog <input id="toggleFog" checked type="checkbox" class="setting-checkbox"></h2><br>
+      <!-- Toggle grass -->
+      <h2>Toggle grass <input id="toggleGrass" checked type="checkbox" class="setting-checkbox"></h2><br>
+      <!-- Physics substeps -->
+      <h2>Physics substeps <input id="physicsSubsteps" value="20" type="range" min="8" max="64" class="setting-slider">
+      </h2><br>
+    </div>
     <br><br>
     <button id="closeSettingsBtn">Close</button>
   </div>

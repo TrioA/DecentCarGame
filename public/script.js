@@ -335,6 +335,8 @@ function getTerrainHeight(x, z) {
 }
 window.getTerrainHeight = getTerrainHeight;
 
+let showGrass = true;
+
 function getTerrainSurfaceInfo(x, z) {
     const y = getTerrainHeight(x, z);
     const delta = 1.0;
@@ -909,18 +911,21 @@ function createGrassMaterial() {
     return grassMat;
 }
 
+let grassGeom;
+
 function createGrassSystem(scene) {
     const group = new THREE.Group();
     group.name = 'CameraDistanceGrassSystem';
     scene.add(group);
 
     const material = createGrassMaterial();
-    const geometry = createGrassBladeGeometry();
+    // const geom = grassGeom || createGrassBladeGeometry();
+    grassGeom = createGrassBladeGeometry();
 
     return {
         group,
         material,
-        geometry,
+        geometry: grassGeom,
         patches: new Map(),
         queuedPatchKeys: new Set(),
         patchQueue: [],
@@ -1028,7 +1033,13 @@ function buildGrassPatch(system, task, cameraX, cameraZ) {
 }
 
 function updateGrassSystem(system, camera, dt) {
-    if (!system) return;
+    if (!system || !showGrass) return;
+    /* if (!showGrass) {
+        for (const key of system.patches.keys()) {
+            if (!wantedKeys.has(key)) disposeGrassPatch(system, key);
+        }
+        return;
+    } */
 
     system.reconcileTimer += dt;
     const cameraX = camera.position.x;
@@ -1100,9 +1111,13 @@ function updateGrassSystem(system, camera, dt) {
 const menuOverlay = document.getElementById('garage-menu');
 const hud = document.getElementById('hud');
 const loadingDiv = document.getElementById('loading');
+const loadingText = document.querySelector('.loading-text');
 const canvasElement = document.getElementById('game-canvas');
 const gaugeCanvas = document.getElementById('hud-gauge-canvas');
 const gCtx = gaugeCanvas.getContext('2d');
+
+// function updateLoadingText(text) { loadingText = loadingText.innerHTML }
+const updateLoadingText = text => loadingText.innerHTML = text;
 
 loadingDiv.style.display = "none";
 loadingDiv.style.opacity = "100%";
@@ -1426,6 +1441,7 @@ async function initializeSimulation() {
 
 
     /* ===== SKYBOX ===== */
+    updateLoadingText("Loading skybox...");
     const exrTexture = await new Promise(res => exrLoader.load('./images/autumn_field_puresky_1k.exr', (texture) => {
         texture.mapping = THREE.EquirectangularReflectionMapping;
         scene.background = texture;
@@ -1478,55 +1494,6 @@ async function initializeSimulation() {
     const outputPass = new OutputPass();
     composer.addPass(outputPass);
 
-    const settingsBtn = document.getElementById('settingsBtn');
-    const settingsMenu = document.getElementById('settingsMenu');
-    let toggleBloom = document.getElementById('toggleBloom');
-    let toggleAA = document.getElementById('toggleAA');
-    let toggleShadows = document.getElementById('toggleShadows');
-    let toggleSkyBox = document.getElementById('toggleSkyBox');
-    let toggleFog = document.getElementById('toggleFog');
-
-    toggleBloom.addEventListener('click', () => bloomPass.enabled = toggleBloom.checked);
-
-    toggleAA.addEventListener('click', () => fxaaPass.enabled = toggleAA.checked);
-
-    toggleShadows.addEventListener('click', () => dirLight.castShadow = toggleShadows.checked);
-
-    toggleSkyBox.addEventListener('click', () => {
-        if (toggleSkyBox.checked) {
-            scene.background = exrTexture;
-            scene.environment = exrTexture;
-            scene.environmentIntensity = 1;
-        } else {
-            scene.background = new THREE.Color(0x87CEEB);
-            scene.environment = new THREE.Color(0x87CEEB);
-            scene.environmentIntensity = 10;
-        }
-    });
-
-    toggleFog.addEventListener('click', () => scene.fog = toggleFog.checked ? new THREE.Fog(0xc7d1d8, 100, 1800) : null);
-
-    settingsBtn.addEventListener('mousedown', (e) => {
-        if (settingsMenu.classList.contains('active')) {
-            settingsMenu.classList.remove('active');
-        } else {
-            settingsMenu.classList.add('active');
-        }
-    });
-    window.addEventListener('keydown', (e) => {
-        if (e.key.toLowerCase() === 'o') {
-            settingsMenu.classList.toggle('active');
-        }
-        if (e.key.toLowerCase() === 'escape') {
-            settingsMenu.classList.remove('active');
-        }
-    });
-    canvasElement.addEventListener('mousedown', (e) => {
-        if (e.target !== settingsBtn && e.target !== settingsMenu && e.target.parentElement !== settingsMenu) {
-            settingsMenu.classList.remove('active');
-        }
-    });
-
 
 
     /* ===== LIGHTS ===== */
@@ -1554,6 +1521,7 @@ async function initializeSimulation() {
 
 
     /* ===== PHYSICS WORLD ===== */
+    updateLoadingText("Initializing Physics...");
     const world = new CANNON.World();
     world.gravity.set(0, -9.82, 0);
     world.broadphase = new CANNON.NaiveBroadphase();
@@ -1573,9 +1541,9 @@ async function initializeSimulation() {
     const gridTexture = new THREE.CanvasTexture(gridCanvas);
     gridTexture.wrapS = gridTexture.wrapT = THREE.RepeatWrapping;
     gridTexture.repeat.set(PLANE_SIZE / 5, PLANE_SIZE / 5);
-
-
-
+    
+    
+    
     const groundMaterial = new CANNON.Material('ground');
     groundMaterial.friction = 0.82;
     groundMaterial.restitution = 0.02;
@@ -1590,14 +1558,14 @@ async function initializeSimulation() {
         shape: groundShape,
         material: groundMaterial
     });
-
+    
     // Position the surface perfectly at y = 0 by dropping the center down by its half-height
     groundBody.position.set(0, -groundThickness, 0);
     world.addBody(groundBody);
-
-
-
-
+    
+    
+    
+    
     const planeMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE),
         new THREE.MeshStandardMaterial({ map: gridTexture, roughness: 0.85, metalness: 0.05 })
@@ -1613,10 +1581,10 @@ async function initializeSimulation() {
     updateDynamicWorldChunks(0, 0, scene, camera);
     const groundMaterial = new CANNON.Material('ground');
     /* const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
-
+    
     // Rotate the geometry flat before calculating coordinates
     terrainGeo.rotateX(-Math.PI / 2);
-
+    
     // Displace vertices up and down using our noise map
     // Allocate color buffers for every single vertex node
     const posAttr = terrainGeo.attributes.position;
@@ -1626,29 +1594,29 @@ async function initializeSimulation() {
         const vz = posAttr.getZ(i);
         const vy = getTerrainHeight(vx, vz);
         posAttr.setY(i, vy);
-
+    
         // Dynamic Slope calculation (compare heights with nearby points)
         const delta = 1.0;
         const hL = getTerrainHeight(vx - delta, vz);
         const hR = getTerrainHeight(vx + delta, vz);
         const hD = getTerrainHeight(vx, vz - delta);
         const hU = getTerrainHeight(vx, vz + delta);
-
+    
         // Normal estimation vector math
         const normalY = 2.0 * delta;
         const normalX = hL - hR;
         const normalZ = hD - hU;
         const len = Math.sqrt(normalX * normalX + normalY * normalY + normalZ * normalZ);
         const slope = 1.0 - (normalY / len); // 0 = perfectly flat, 1 = absolute vertical cliff
-
+    
         // Base Palette Color Defs (Minimalist, organic shades)
         const grassColor = new THREE.Color(0x2d3a22);
         const rockColor = new THREE.Color(0x3a3d40);
         const snowColor = new THREE.Color(0xdce3e8);
         const sandColor = new THREE.Color(0x403d35);
-
+    
         let finalColor = new THREE.Color();
-
+    
         // 1. Biome styling rules based on height and slope properties
         if (vy < 0.5) {
             // Low ground plains: Blend sand/dirt patch borders into lush wild grass
@@ -1666,20 +1634,20 @@ async function initializeSimulation() {
                 finalColor.copy(grassColor).lerp(rockColor, tSlope * tSlope);
             }
         }
-
+    
         colors.push(finalColor.r, finalColor.g, finalColor.b);
     }
-
+    
     terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     terrainGeo.computeVertexNormals();
-
+    
     const terrainMat = new THREE.MeshStandardMaterial({
         vertexColors: true, // Tell Three.js to look at our procedural color array map
         roughness: 0.85,
         metalness: 0.05,
         flatShading: true
     });
-
+    
     const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
     scene.add(terrainMesh); */
 
@@ -1703,19 +1671,19 @@ async function initializeSimulation() {
             matrix[i].push(getTerrainHeight(x, -z));
         }
     }
-
+    
     // Instantiate the physical physics height shape container
     const hfShape = new CANNON.Heightfield(matrix, {
         elementSize: terrainSize / segments
     });
-
+    
     const hfBody = new CANNON.Body({ mass: 0 }); // Infinite mass static floor boundary
     hfBody.addShape(hfShape);
-
+    
     // Align the physics field matrix pivot cleanly to your visual Three.js mesh coordinates
     hfBody.position.set(-terrainSize / 2, 0, terrainSize / 2);
     hfBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
-
+    
     world.addBody(hfBody); */
 
     updateStreamingPhysicsFloor(0, 0, world);
@@ -1723,6 +1691,7 @@ async function initializeSimulation() {
 
 
     /* ===== CHASSIS VISUAL INITIALIZATION ===== */
+    updateLoadingText("Setting up your car...");
     const carVisualChassis = new THREE.Group();
     carVisualChassis.castShadow = true;
     carVisualChassis.receiveShadow = true;
@@ -1743,7 +1712,7 @@ async function initializeSimulation() {
     var taillightMat;
 
 
-
+    updateLoadingText("Loading car model...");
     await new Promise(res => fbxLoader.load('./models/mazda-rx7-stylised/model4.fbx', (fbx) => {
         fbx.rotation.y = Math.PI;
         fbx.position.set(0, -1.1, 0);
@@ -1976,6 +1945,7 @@ async function initializeSimulation() {
 
 
     /* ===== DRIVE SYSTEMS / CONFIG ===== */
+    updateLoadingText("Transferring control over to you...");
     let currentGear = 1;
     let isEngineBroken = false;
     // Global state trackers for the drift/skidmark system
@@ -2182,8 +2152,8 @@ async function initializeSimulation() {
     }
 
     /**
- * Drives audio frequency modifiers using real-time car metrics
- */
+    * Drives audio frequency modifiers using real-time car metrics
+    */
     function updateProceduralAudio(rpm, isSlipping, isEngineBroken) {
         if (!audioInitialized || !audioCtx) return;
 
@@ -2243,12 +2213,151 @@ async function initializeSimulation() {
     resetCarParallelToGround(chassisBody, carVisualChassis);
 
     // new CANNON.Vec3(0.9, 0.25, 2.15)
-    const aRandomMesh = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1, 2.25));
-    scene.add(aRandomMesh);
+    /* const aRandomMesh = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1, 2.25));
+    scene.add(aRandomMesh); */
+
+    updateLoadingText("Applying your settings...");
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsMenu = document.getElementById('settingsMenu');
+    let toggleBloom = document.getElementById('toggleBloom');
+    let toggleAA = document.getElementById('toggleAA');
+    let toggleShadows = document.getElementById('toggleShadows');
+    let toggleSkyBox = document.getElementById('toggleSkyBox');
+    let toggleFog = document.getElementById('toggleFog');
+    let toggleGrass = document.getElementById('toggleGrass');
+    let physicsSubsteps = document.getElementById('physicsSubsteps');
+
+    let settings = {
+        bloom: toggleBloom.checked,
+        antialiasing: toggleAA.checked,
+        shadows: toggleShadows.checked,
+        skybox: toggleSkyBox.checked,
+        fog: toggleFog.checked,
+        grass: toggleGrass.checked,
+        physicsSubsteps: physicsSubsteps.value,
+    }
+    if (localStorage.getItem("renderSettings")) {
+        settings = JSON.parse(localStorage.getItem("renderSettings"));
+        toggleBloom.checked = settings.bloom;
+        toggleAA.checked = settings.antialiasing;
+        toggleShadows.checked = settings.shadows;
+        toggleSkyBox.checked = settings.skybox;
+        toggleFog.checked = settings.fog;
+        showGrass = toggleGrass.checked = settings.grass;
+    }
+
+    settingsMenu.addEventListener("mousedown", e => {
+        localStorage.setItem("renderSettings", JSON.stringify(settings));
+    });
+
+    toggleBloom.addEventListener('click', () => settings.bloom = bloomPass.enabled = toggleBloom.checked);
+    toggleAA.addEventListener('click', () => settings.antialiasing = fxaaPass.enabled = toggleAA.checked);
+    toggleShadows.addEventListener('click', () => {
+        settings.shadows = toggleShadows.checked
+        if (dirLight) dirLight.castShadow = settings.shadows;
+    });
+    toggleGrass.addEventListener('change', (e) => {
+        settings.grass = showGrass = e.target.checked;
+
+        if (!showGrass) {
+            grassSystem.geometry = null;
+            scene.traverse((obj) => {
+                if (obj.name.startsWith("grass-patch-")) {
+                    scene.remove(obj);
+                    obj.geometry?.dispose();
+                    obj.visible = false;
+                    grassSystem.patches.delete(obj.name);
+                    grassSystem.queuedPatchKeys.delete(obj.name);
+                }
+            })
+        } else {
+            grassSystem.geometry = grassGeom;
+            scene.traverse((obj) => {
+                if (obj.name.startsWith("grass-patch-")) {
+                    obj.visible = true;
+                }
+            })
+        }
+
+        // Loop over currently cached active chunks to apply the toggle instantly
+        activeChunks.forEach((chunkData) => {
+            const mesh = chunkData.chunkMesh;
+            if (!mesh) return;
+
+            // Find any existing instanced grass layers attached to this chunk
+            const grassMeshes = mesh.children.filter(child => child.isInstancedMesh);
+
+            if (!showGrass) {
+                // Hiding/disposing of grass elements entirely to stop processing
+                grassMeshes.forEach(gm => {
+                    mesh.remove(gm);
+                    if (gm.geometry) gm.geometry.dispose();
+                });
+            } else {
+                // Re-trigger chunk regeneration tasks so it recreates them if missing
+                // This ensures grass is processed and recreated from scratch matching the toggle state
+                const currentChunkX = Math.round(mesh.position.x / CHUNK_SIZE);
+                const currentChunkZ = Math.round(mesh.position.z / CHUNK_SIZE);
+                const key = `${currentChunkX},${currentChunkZ}`;
+
+                queueChunkGenerationTask({
+                    key,
+                    chunkX: currentChunkX,
+                    chunkZ: currentChunkZ,
+                    lod: chunkData.lodLevel,
+                    isMorph: true
+                });
+            }
+        });
+    });
+
+    toggleSkyBox.addEventListener('click', () => {
+        settings.skybox = toggleSkyBox.checked;
+        if (toggleSkyBox.checked) {
+            scene.background = exrTexture;
+            scene.environmentIntensity = 1;
+        } else {
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.environmentIntensity = 10;
+        }
+        scene.environment = scene.background;
+    });
+
+    toggleFog.addEventListener('click', () => {
+        // settings.fog = toggleFog.checked;
+        scene.fog = (settings.fog = toggleFog.checked) ? new THREE.Fog(0xc7d1d8, 100, 1800) : null;
+    });
+
+    settingsBtn.addEventListener('mousedown', (e) => {
+        if (settingsMenu.classList.contains('active')) {
+            settingsMenu.classList.remove('active');
+        } else {
+            settingsMenu.classList.add('active');
+        }
+    });
+    window.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'o') {
+            settingsMenu.classList.toggle('active');
+        }
+        if (e.key.toLowerCase() === 'escape') {
+            settingsMenu.classList.remove('active');
+        }
+    });
+    canvasElement.addEventListener('mousedown', (e) => {
+        if (e.target !== settingsBtn && e.target !== settingsMenu && e.target.parentElement !== settingsMenu) {
+            settingsMenu.classList.remove('active');
+        }
+    });
+
+    // Apply inital settings
+    [toggleBloom, toggleAA, toggleShadows, toggleSkyBox, toggleFog, toggleGrass].forEach(toggle => {
+        toggle.click(); toggle.click();
+    });
 
 
 
     /* ===== INTERNAL ANIMATE FRAMELOOP ===== */
+    updateLoadingText("Game loaded.");
     function animate() {
         stats.begin();
         timer.update();
@@ -2263,7 +2372,7 @@ async function initializeSimulation() {
 
         dirLight.target.updateMatrixWorld();
 
-        aRandomMesh.position.copy(chassisBody.position);
+        // aRandomMesh.position.copy(chassisBody.position);
 
         // groundBody.position.set(chassisBody.position.x, -10, chassisBody.position.z);
         // Physics body
@@ -2317,10 +2426,10 @@ async function initializeSimulation() {
         const rightFrontGrounded = vehicle.wheelInfos[1].raycastResult.hasHit;
         const leftRearGrounded = vehicle.wheelInfos[2].raycastResult.hasHit;
         const rightRearGrounded = vehicle.wheelInfos[3].raycastResult.hasHit;
-
+    
         const driveWheelsGrounded = leftRearGrounded || rightRearGrounded;
         const anyWheelGrounded = leftFrontGrounded || rightFrontGrounded || leftRearGrounded || rightRearGrounded;
-
+    
         if (anyWheelGrounded) {
             speedKmH = Math.abs(Math.round(speed * 3.6));
         } else {
@@ -2469,7 +2578,7 @@ async function initializeSimulation() {
 
         updateProceduralAudio(currentRPM, isCarCurrentlyDrifting, isEngineBroken);
 
-        world.step(dt, dt, 10);
+        world.step(Math.min(1 / 60, dt), dt, settings.physicsSubsteps);
 
         if (animalFlockSystem && typeof animalFlockSystem.syncMeshes === 'function') {
             animalFlockSystem.syncMeshes(camera);
@@ -2571,15 +2680,15 @@ async function initializeSimulation() {
             grassMaterialPointer.userData.shaderUniforms.uTime.value = Date.now() * 0.001;
         } */
         /* for (const chunkData of activeChunks.values()) {
-
+    
             const grass = chunkData.chunkMesh.children.find(
                 child => child.isInstancedMesh
             );
-
+    
             if (!grass) continue;
-
+    
             const box = new THREE.Box3().setFromObject(grass);
-
+    
             grass.visible = frustum.intersectsBox(box);
         } */
 
@@ -2587,7 +2696,7 @@ async function initializeSimulation() {
         bokehPass.uniforms['focus'].value = lerp(bokehPass.uniforms['focus'].value, targetFocus, 0.1);
         // bokehPass.uniforms['aperture'].value = lerp(bokehPass.uniforms['aperture'].value, targetAperture, 0.08);
         // bokehPass.uniforms['maxblur'].value = lerp(bokehPass.uniforms['maxblur'].value, targetMaxBlur, 0.08);
-        afterimagePass.uniforms["damp"].value = dt * 10;
+        afterimagePass.uniforms["damp"].value = 0.003 / dt; // value is 0.05 at 1/120 dt, so we need 0.025 at 1/60dt
 
         composer.render(scene, camera);
         stats.end();

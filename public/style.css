@@ -382,8 +382,8 @@ canvas {
     max-height: 700px;
     position: fixed;
     top: 12.5vh;
-    left: 32.5vw;
-    transform: scale(0.95);
+    left: 50vw;
+    transform: translateX(-50%) scale(0.95);
     opacity: 0;
     visibility: hidden;
     border-radius: 24px;
@@ -403,7 +403,7 @@ canvas {
 }
 
 #settingsMenu.active {
-    transform: scale(1);
+    transform: scale(1) translateX(-50%);
     opacity: 1;
     visibility: visible;
 }
@@ -412,7 +412,8 @@ canvas {
     color: #00ffcc;
     font-size: 28px;
     font-weight: 800;
-    margin-bottom: 10px;
+    margin-top: 10px;
+    margin-bottom: -20px;
     padding: 10px 30px;
     letter-spacing: 4px;
     text-transform: uppercase;
@@ -429,14 +430,14 @@ canvas {
     color: rgba(255, 255, 255, 0.9);
     font-size: 16px;
     font-weight: 700;
-    margin-bottom: 15px;
+    margin-bottom: -15px;
     padding: 10px 20px;
     letter-spacing: 2px;
     text-transform: uppercase;
     border-left: 3px solid #00ffcc;
     align-self: flex-start;
     margin-left: 1vw;
-    width: 20vw;
+    width: 70%;
     background: linear-gradient(90deg, rgba(0, 255, 204, 0.1) 0%, transparent 100%);
 }
 
@@ -484,6 +485,39 @@ canvas {
     letter-spacing: 0.5px;
 }
 
+.settings-section {
+    /* create a container for each section to allow aligning items together */
+    display: flex;
+    flex-direction: column;
+    width: 90%;
+    height: 70%;
+    gap: 0px;
+    margin-bottom: 10px;
+    background-color: #10101080;
+    border-radius: 20px;
+    padding: 10px;
+    position: absolute;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    overflow-y: scroll;
+    scroll-behavior: smooth;
+}
+
+.settings-section::-webkit-scrollbar {
+    width: 6px;
+    background-color: #1a1a1a00;
+}
+
+.settings-section::-webkit-scrollbar-thumb {
+    background-color: #00ffcc2f;
+    border-radius: 5px;
+}
+
+.settings-section::-webkit-scrollbar-thumb:hover {
+    background-color: #00ffcc;
+}
+
 /* Base style for settings checkboxes */
 .setting-checkbox {
     -webkit-appearance: none;
@@ -497,11 +531,10 @@ canvas {
     display: inline-block;
     vertical-align: middle;
     cursor: pointer;
-    position: relative;
+    position: absolute;
     transition: all 0.2s ease;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8);
-    margin-right: -5vw;
-    float: right;
+    right: 50px;
 }
 
 /* Hover state */
@@ -542,6 +575,73 @@ canvas {
     border-color: #001010;
     opacity: 1;
     transform: rotate(-45deg) scale(1);
+}
+
+/* Style for physics substeps input */
+.setting-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 220px;
+    max-width: 30%;
+    height: 12px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 2px solid rgba(0, 255, 204, 0.5);
+    outline: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8);
+    float: right;
+    margin-right: -70px;
+    padding: 0 4px;
+}
+
+.setting-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #ffffff 0, #00ffcc 40%, #009f88 100%);
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(0, 255, 204, 0.6);
+    transition: 0.2s;
+}
+
+.setting-slider::-moz-range-thumb {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #ffffff 0, #00ffcc 40%, #009f88 100%);
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(0, 255, 204, 0.6);
+    border: none;
+}
+
+.setting-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.1);
+    box-shadow: 0 0 15px rgba(0, 255, 204, 0.8);
+}
+
+.setting-slider:hover::-moz-range-thumb {
+    transform: scale(1.1);
+    box-shadow: 0 0 15px rgba(0, 255, 204, 0.8);
+}
+
+.setting-slider:focus-visible {
+    outline: 2px solid #00ffcc;
+    outline-offset: 3px;
+}
+
+/* Display value next to slider */
+.setting-item .slider-value {
+    color: #00ffcc;
+    font-weight: 600;
+    font-size: 12px;
+    min-width: 30px;
+    text-align: right;
+    margin-left: 10px;
+    transition: 0.2s;
 }
 
 /* Toggle switch */
@@ -636,7 +736,7 @@ canvas {
     margin: 5px;
 }
 
-#settingsMenu button:hover {
+/* #settingsMenu button:hover {
     background: #00ffcc;
     color: #000;
     transform: translateY(-3px);
@@ -647,7 +747,7 @@ canvas {
 #settingsMenu button:active {
     transform: translateY(-1px) scale(0.98);
     box-shadow: 0 4px 15px rgba(0, 255, 204, 0.4);
-}
+} */
 
 #closeSettingsBtn {
     padding: 14px 30px;
@@ -668,8 +768,8 @@ canvas {
 }
 
 #closeSettingsBtn:hover {
-    background: linear-gradient(135deg, #00e6b8 0%, #00d4a8 100%);
-    transform: translateX(-50%) translateY(-3px);
+    background: linear-gradient(135deg, #00e6b840 0%, #00d4a880 100%);
+    transform: translateX(-50%) translateY(-5px);
     box-shadow: 0 10px 35px rgba(0, 255, 204, 0.6);
 }
 

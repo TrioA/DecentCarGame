@@ -132,7 +132,7 @@ class Boid {
 
         this.body.allowSleep = true;
         this.body.sleepSpeedLimit = 0.1;
-        this.body.sleepTimeLimit = 1.0;
+        this.body.sleepTimeLimit = 100.0;
 
         this.physicsDisabled = false;
         this.farTimer = 0;
@@ -226,6 +226,27 @@ export function createAnimalFlockSystem(scene, world, chassisBody) {
 
         for (let i = 0; i < cfg.FLOCK_COUNT; i++) {
             boids.push(new Boid(world, scene, i, home, null, animalMaterial));
+            const boid = boids[i];
+            boid.body.addEventListener('collide', (e) => {
+                if (e.body.type == 2) return;
+                console.log("collided");
+                if (e.body.id == chassisBody.id) {
+                    console.log("Car collided!");
+                    const len = Math.sqrt(e.body.velocity.x * e.body.velocity.x + e.body.velocity.z * e.body.velocity.z) + 0.001;
+                    const impulseMag = Math.sqrt(e.body.velocity.x * e.body.velocity.x + e.body.velocity.z * e.body.velocity.z) * boid.body.mass * 0.18;
+                    _impulse.set(
+                        (e.body.velocity.x / len) * impulseMag,
+                        impulseMag * 0.75 + 5,
+                        (e.body.velocity.z / len) * impulseMag
+                    );
+                    boid.body.applyImpulse(_impulse, CANNON.Vec3.ZERO);
+                    boid.isRagdoll = true;
+                    boid.ragdollTimer = cfg.RECOVERY_TIME;
+                }
+                // if(e.body === chassisBody){
+                //     
+                // }
+            })
         }
     }
 
@@ -467,7 +488,7 @@ export function createAnimalFlockSystem(scene, world, chassisBody) {
                 const carSpeedSq = cv.x * cv.x + cv.y * cv.y + cv.z * cv.z;
 
                 if (distSq < impactDistanceSq && carSpeedSq > launchSpeedSq) {
-                    const len = Math.sqrt(cv.x * cv.x + cv.z * cv.z) + 0.001;
+                    /* const len = Math.sqrt(cv.x * cv.x + cv.z * cv.z) + 0.001;
                     const impulseMag = Math.sqrt(carSpeedSq) * boid.body.mass * 0.18 * 4;
                     _impulse.set(
                         (cv.x / len) * impulseMag,
@@ -476,7 +497,7 @@ export function createAnimalFlockSystem(scene, world, chassisBody) {
                     );
                     boid.body.applyImpulse(_impulse, CANNON.Vec3.ZERO);
                     boid.isRagdoll = true;
-                    boid.ragdollTimer = cfg.RECOVERY_TIME;
+                    boid.ragdollTimer = cfg.RECOVERY_TIME; */
                     continue;
                 }
             }
